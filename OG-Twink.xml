@@ -1,0 +1,17 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
+..\FrameXML\UI.xsd">
+	<Script file="OG-Twink.lua"/>
+	<Frame name="OGTwinkFrame" hidden="false">
+		<Scripts>
+			<OnLoad>
+				OGTwink_OnLoad()
+			</OnLoad>
+			<OnEvent>
+				OGTwink_OnEvent(event)
+			</OnEvent>
+			<OnUpdate>
+				ogt_onesecondtick()
+			</OnUpdate>
+		</Scripts>
+	</Frame>
+</Ui>

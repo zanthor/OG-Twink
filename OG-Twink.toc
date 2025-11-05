@@ -1,0 +1,8 @@
+## Interface: 11200
+## Title: OG-Twink
+## Notes: Minimal twink kick/reinvite helper for power-leveling
+## Author: Zanthor
+## Version: 1.0.0
+## SavedVariablesPerCharacter: OGTwinkDB
+
+OG-Twink.lua
