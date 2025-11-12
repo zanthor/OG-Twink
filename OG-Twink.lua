@@ -137,6 +137,44 @@ OGTFrame:SetScript("OnEvent", function()
         end
         return
     end
+
+    -- Handle whisper messages for reinvite coordination
+    if event == "CHAT_MSG_WHISPER" then
+        local msg = arg1
+        local sender = arg2
+        local target = ogfFollowTarget or (OGTwinkDB and OGTwinkDB.Target) or ""
+
+        -- Only process messages from our follow target
+        if sender and target and string.lower(sender) == string.lower(target) then
+            -- Powerleveler dropped from party
+            if msg == "OGTDROP" then
+                OGT_Print(sender.." dropped from party. Starting reinvite timer.")
+                local now = GetTime()
+                ogt_Reinvite.active         = true
+                ogt_Reinvite.name           = sender
+                ogt_Reinvite.startedAt      = now
+                ogt_Reinvite.firstInvite    = now + 30   -- primary reinvite at 30s
+                ogt_Reinvite.fallbackInvite = now + 40   -- fallback reinvite at 40s
+                ogt_Reinvite.nextInvite     = now + 42   -- continuous retry starts at 42s
+                ogt_Reinvite.timeoutAt      = now + 65   -- stop after 65s total
+                ogt_Reinvite.firstSent      = false
+                ogt_Reinvite.fallbackSent   = false
+                return
+            end
+
+            -- Powerleveler requesting invite
+            if msg == "OGTREQUEST" then
+                if IsPartyLeader() or GetNumPartyMembers() == 0 then
+                    OGT_Print(sender.." requesting invite. Sending now.")
+                    InviteByName(sender)
+                else
+                    OGT_Print(sender.." requesting invite but not party leader.")
+                end
+                return
+            end
+        end
+        return
+    end
 end)
 
 -- Register events
@@ -146,6 +184,7 @@ OGTFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 OGTFrame:RegisterEvent("AUTOFOLLOW_BEGIN")
 OGTFrame:RegisterEvent("AUTOFOLLOW_END")
 OGTFrame:RegisterEvent("PARTY_INVITE_REQUEST")
+OGTFrame:RegisterEvent("CHAT_MSG_WHISPER")
 
 ---------------------------
 -- Follow / Strobe
@@ -164,7 +203,7 @@ local function PlayerHasDrink()
     for i = 1, 16 do
         local buff = UnitBuff("player", i)
         if not buff then break end
-        local texture = GetPlayerBuffTexture(i-1) -- 0-based for GetPlayerBuff*
+        local texturqe = GetPlayerBuffTexture(i-1) -- 0-based for GetPlayerBuff*
         if texture and string.find(texture, "INV_Drink") then
             return true
         end
@@ -197,23 +236,29 @@ function OGTwink_Strobe()
             if ogt_Reinvite.timeoutAt and now >= ogt_Reinvite.timeoutAt then
                 OGT_Print("Reinvite window expired for "..ogt_Reinvite.name..".")
                 ogt_Reinvite.active = false
-            -- Primary reinvite at 30s
+            -- Primary reinvite at 30s (or request if not leader)
             elseif ogt_Reinvite.firstInvite and now >= ogt_Reinvite.firstInvite and not ogt_Reinvite.firstSent then
                 if IsPartyLeader() or GetNumPartyMembers() == 0 then
                     OGT_Print("Sending primary reinvite (30s)...")
                     InviteByName(ogt_Reinvite.name)
                     ogt_Reinvite.firstSent = true
                 else
-                    OGT_Print("Cannot send reinvite - not party leader.")
+                    -- Not leader - request invite from the target
+                    OGT_Print("Requesting invite from "..ogt_Reinvite.name.." (30s)...")
+                    SendChatMessage("OGTREQUEST", "WHISPER", nil, ogt_Reinvite.name)
+                    ogt_Reinvite.firstSent = true
                 end
-            -- Fallback reinvite at 40s
+            -- Fallback reinvite at 40s (or request if not leader)
             elseif ogt_Reinvite.fallbackInvite and now >= ogt_Reinvite.fallbackInvite and not ogt_Reinvite.fallbackSent then
                 if IsPartyLeader() or GetNumPartyMembers() == 0 then
                     OGT_Print("Sending fallback reinvite (40s)...")
                     InviteByName(ogt_Reinvite.name)
                     ogt_Reinvite.fallbackSent = true
                 else
-                    OGT_Print("Cannot send reinvite - not party leader.")
+                    -- Not leader - request invite from the target
+                    OGT_Print("Requesting invite from "..ogt_Reinvite.name.." (40s)...")
+                    SendChatMessage("OGTREQUEST", "WHISPER", nil, ogt_Reinvite.name)
+                    ogt_Reinvite.fallbackSent = true
                 end
             -- Continuous retry after fallback
             elseif ogt_Reinvite.nextInvite and now >= ogt_Reinvite.nextInvite and ogt_Reinvite.fallbackSent then
@@ -223,7 +268,9 @@ function OGTwink_Strobe()
                     -- schedule next retry
                     ogt_Reinvite.nextInvite = now + 2  -- retry every 2s after fallback
                 else
-                    -- Not leader—try again later
+                    -- Not leader - request invite from the target
+                    OGT_Print("Requesting invite...")
+                    SendChatMessage("OGTREQUEST", "WHISPER", nil, ogt_Reinvite.name)
                     ogt_Reinvite.nextInvite = now + 2
                 end
             end
@@ -447,12 +494,40 @@ function ogTwink_CmdParser(parm1)
         OGT_Print("/ogt status      - Show status")
         OGT_Print("/ogt target <name> - Set follow target")
         OGT_Print("/ogt enable|disable - Toggle sticky follow")
+        OGT_Print("/ogt drop        - Powerleveler: Leave party & notify twink")
         OGT_Print("/ogt healtwink   - Health-based invite/kick")
         OGT_Print("/ogt twink <pct> - Tag at target HP% for XP optimization")
         return
     end
 
     local cmd = string.lower(parms[1] or "")
+    
+    if cmd == "drop" then
+        -- Powerleveler drops from party and notifies twink
+        local target = ogfFollowTarget or (OGTwinkDB and OGTwinkDB.Target) or ""
+        if not target or target == "" then
+            OGT_Print("No follow target set. Use /ogt target <name> first.")
+            return
+        end
+        
+        -- Silently ignore if not in party (for spam-safe hotkey usage)
+        if GetNumPartyMembers() == 0 then
+            return
+        end
+        
+        -- Check if target is in party
+        if not OGT_IsInParty(target) then
+            return
+        end
+        
+        -- Send whisper to notify twink
+        SendChatMessage("OGTDROP", "WHISPER", nil, target)
+        OGT_Print("Notified "..target.." of drop. Leaving party...")
+        
+        -- Leave party
+        LeaveParty()
+        return
+    end
     
     if cmd == "healtwink" then
         OGTwink_HealthTwink()

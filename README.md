@@ -39,6 +39,7 @@ Two modes for managing party membership to maximize XP:
 /ogt target <name>      - Set follow target
 /ogt enable             - Enable sticky follow
 /ogt disable            - Disable sticky follow
+/ogt drop               - Powerleveler: Leave party & notify twink
 /ogt healtwink          - Health-based party management
 /ogt twink <percent>    - Tag at target HP% for XP optimization
 ```
@@ -49,21 +50,36 @@ Alternative command: `/ogtwink`
 
 ### Basic Setup
 ```
-/ogt target Gnuzmas     # Set your follow target
-/ogt enable             # Enable sticky following
+/ogt target Gnuzmas     # Set your follow target (both characters)
+/ogt enable             # Enable sticky following (twink only)
 ```
 
-### Tag Mode (Optimal XP per Kill)
+### Mode 1: Twink is Party Leader (Original Mode)
+**On the Twink (Low Level Character):**
 ```
-/ogt twink 25           # Kick target when mob hits 25% HP
+/ogt twink 25           # Kick powerleveler when mob hits 25% HP
                         # Will auto-reinvite after 30 seconds
 ```
 Use this mode when:
+- Twink is party leader
 - You want to tag many mobs quickly
 - You want full XP from solo kills
-- Your follow target reinvites you between pulls
+- Your twink manages the party
+
+### Mode 2: Powerleveler is Party Leader (New Mode)
+**On the Powerleveler (High Level Character):**
+```
+/ogt drop               # Leave party and notify twink
+                        # Twink will request reinvite after 30s
+```
+Use this mode when:
+- Powerleveler is party leader
+- Powerleveler drops to let twink get solo XP
+- Twink automatically requests reinvite after timer
+- More control for the powerleveler
 
 ### Health-Based Mode (Continuous Healing)
+**On the Twink:**
 ```
 /ogt healtwink          # Invite when HP < 80%, kick when HP > 80%
 ```
@@ -94,12 +110,25 @@ Settings are saved per character in `OGTwinkDB`:
 
 ## Technical Details
 
+### Communication Protocol
+The addon uses whispers to coordinate between characters:
+- **OGTDROP**: Sent when powerleveler uses `/ogt drop`
+- **OGTREQUEST**: Sent when twink requests reinvite after timer
+
+These messages are automatically filtered - you won't see them in chat.
+
 ### Reinvite System
-After kicking someone with `/ogt twink`:
-- First reinvite attempt: 30 seconds after kick
-- Retry interval: Every 1 second
-- Timeout: 65 seconds total
-- Stops automatically when target rejoins
+After kicking someone with `/ogt twink` or receiving `/ogt drop`:
+- **30s**: Primary reinvite/request attempt
+- **40s**: Fallback reinvite/request attempt  
+- **42s+**: Continuous retry every 2 seconds
+- **65s**: System times out and stops
+- Stops automatically when target rejoins party
+
+**Smart Behavior:**
+- If character is party leader: Sends invites
+- If character is NOT party leader: Requests invite via whisper
+- Works seamlessly in both directions
 
 ### Follow Behavior
 - Pauses during combat
